@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from pydantic import ValidationError
+
 from coding_agent.config import ConfigError, Settings, load_settings
 
 
@@ -81,3 +83,33 @@ def test_api_key_is_masked_in_settings_repr(tmp_path: Path) -> None:
 
     assert secret not in repr(settings)
     assert settings.kimi_api_key.get_secret_value() == secret
+
+
+def test_explicit_model_catalog_only_requires_referenced_provider(tmp_path: Path) -> None:
+    settings = Settings(
+        AGENT_MODELS="openai-compatible:qwen-coder, openai-compatible:qwen-fast",
+        AGENT_DEFAULT_MODEL="openai-compatible:qwen-fast",
+        OPENAI_COMPAT_API_KEY="compat-secret",
+        OPENAI_COMPAT_BASE_URL="http://localhost:8000/v1",
+        AGENT_WORKSPACE=tmp_path,
+        _env_file=None,
+    )
+
+    assert [item.reference for item in settings.model_catalog] == [
+        "openai-compatible:qwen-coder",
+        "openai-compatible:qwen-fast",
+    ]
+    assert settings.default_model_selection.reference == "openai-compatible:qwen-fast"
+    assert settings.kimi_api_key is None
+    assert settings.provider_secrets == ("compat-secret",)
+
+
+def test_default_model_must_be_in_catalog(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            AGENT_MODELS="kimi:kimi-a",
+            AGENT_DEFAULT_MODEL="kimi:kimi-b",
+            KIMI_API_KEY="secret",
+            AGENT_WORKSPACE=tmp_path,
+            _env_file=None,
+        )

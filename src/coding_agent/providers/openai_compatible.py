@@ -1,20 +1,15 @@
-"""Kimi provider built on its OpenAI-compatible chat API."""
+"""Generic OpenAI-compatible chat-completions provider."""
 
 from __future__ import annotations
-
-from typing import TYPE_CHECKING
 
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
 from coding_agent.providers.base import ModelCapabilities
 
-if TYPE_CHECKING:
-    from coding_agent.config import Settings
 
-
-class KimiProvider:
-    provider_id = "kimi"
+class OpenAICompatibleProvider:
+    provider_id = "openai-compatible"
 
     def __init__(self, api_key: SecretStr, base_url: str) -> None:
         self.api_key = api_key
@@ -35,14 +30,4 @@ class KimiProvider:
         )
 
 
-def create_kimi_client(settings: Settings) -> ChatOpenAI:
-    """Compatibility factory for the legacy Kimi-only entry point."""
-
-    if settings.kimi_api_key is None or settings.kimi_model is None:
-        raise ValueError("KIMI_API_KEY 和 KIMI_MODEL 未配置")
-    return KimiProvider(
-        settings.kimi_api_key, str(settings.kimi_base_url)
-    ).create_model(settings.kimi_model)
-
-
-__all__ = ["KimiProvider", "create_kimi_client"]
+__all__ = ["OpenAICompatibleProvider"]

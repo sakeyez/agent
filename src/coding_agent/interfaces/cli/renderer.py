@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import TextIO
 
 from coding_agent.agents.coding.tasks import TaskPlan
+from coding_agent.providers import ModelSelection
+from coding_agent.sessions import Session, SessionId
 
 
 def render_task(task: TaskPlan | None) -> str:
@@ -60,4 +62,64 @@ def render_task_transition(
     output.flush()
 
 
-__all__ = ["render_task", "render_task_transition"]
+def assistant_label(selection: ModelSelection) -> str:
+    return "Kimi> " if selection.provider_id == "kimi" else "Model> "
+
+
+def render_session(session: Session) -> str:
+    return (
+        f"当前会话: {session.name} ({str(session.id)[:8]}) | "
+        f"模型: {session.model.reference}"
+    )
+
+
+def render_sessions(sessions: tuple[Session, ...], active_id: SessionId) -> str:
+    lines = ["会话列表:"]
+    for session in sessions:
+        marker = ">" if session.id == active_id else "-"
+        lines.append(
+            f"{marker} {session.name} ({str(session.id)[:8]}) | {session.model.reference}"
+        )
+    return "\n".join(lines)
+
+
+def render_models(
+    models: tuple[ModelSelection, ...],
+    current: ModelSelection,
+    default: ModelSelection,
+) -> str:
+    lines = ["模型列表:"]
+    for model in models:
+        markers = []
+        if model == current:
+            markers.append("current")
+        if model == default:
+            markers.append("default")
+        suffix = f" [{' '.join(markers)}]" if markers else ""
+        lines.append(f"- {model.reference}{suffix}")
+    return "\n".join(lines)
+
+
+def render_help() -> str:
+    return "\n".join(
+        [
+            "可用命令:",
+            "/status  查看当前任务    /cancel  取消未完成任务",
+            "/session 查看当前会话    /sessions 列出会话",
+            "/new [名称] 新建会话     /use <名称或ID> 切换会话",
+            "/rename <名称> 重命名    /delete <名称或ID> 删除会话",
+            "/models  列出模型        /model <provider:model-id> 切换模型",
+            "/help    查看帮助        /exit  退出",
+        ]
+    )
+
+
+__all__ = [
+    "assistant_label",
+    "render_help",
+    "render_models",
+    "render_session",
+    "render_sessions",
+    "render_task",
+    "render_task_transition",
+]

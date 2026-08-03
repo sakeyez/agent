@@ -12,12 +12,14 @@
 - 有界上下文与长期记忆，分离当前任务、会话决策、项目约束和可丢弃日志。
 - 本地插件清单、无导入发现、兼容性校验、启停配置、原子注册和异常隔离。
 - MCP stdio 长期会话、工具发现与调用、JSON Schema 校验、annotations 风险映射和隔离关闭。
+- CLI、应用组装和结构化终端渲染已迁移到 `interfaces/application` 分层。
+- 正式会话服务、多会话生命周期、活动会话恢复和旧 `default` checkpoint 兼容。
+- Kimi/OpenAI-compatible Provider 抽象、模型目录和按会话持久化的多模型选择。
 
 ## 下一阶段
 
-1. 将 CLI、应用组装、会话服务和结构化终端渲染迁移到已经预留的分层模块。
-2. 扩展 MCP HTTP/SSE、resources、prompts、OAuth 和 capability negotiation。
-3. 多模型、网页界面和子 Agent 保持后续独立里程碑。
+1. 扩展 MCP HTTP/SSE、resources、prompts、OAuth 和 capability negotiation。
+2. 网页界面和子 Agent 保持后续独立里程碑。
 
 ## 上线约束
 

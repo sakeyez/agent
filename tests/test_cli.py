@@ -18,6 +18,7 @@ from coding_agent import cli
 from coding_agent.agents.coding.graph import create_agent_graph
 from coding_agent.agents.coding.planner import CorrectionDecision, PlanningDecision
 from coding_agent.config import ConfigError, Settings
+from coding_agent.persistence import open_sqlite_persistence
 
 
 class FailingChatModel(BaseChatModel):
@@ -264,6 +265,13 @@ def test_cli_can_cancel_task_after_interrupt(settings: Settings) -> None:
     assert "最近的检查点暂停" in rendered
     assert "任务已取消" in rendered
     assert "状态: cancelled" in rendered
+    assert settings.database_path is not None
+    with open_sqlite_persistence(settings.database_path) as persistence:
+        snapshot = create_agent_graph(
+            TaskCliModel(responses=[]),
+            checkpointer=persistence.checkpointer,
+        ).get_state(cli.THREAD_CONFIG)
+    assert snapshot.next == ()
 
 
 def test_cli_automatically_resumes_unfinished_task(settings: Settings) -> None:
@@ -308,3 +316,93 @@ def test_cli_automatically_resumes_unfinished_task(settings: Settings) -> None:
     assert "正在恢复未完成任务" in stdout.getvalue()
     assert "Documentation task completed." in stdout.getvalue()
     assert resumed_planner.plan_calls == 0
+
+
+def test_cli_manages_isolated_sessions(settings: Settings) -> None:
+    stdout = StringIO()
+    result = cli.run_cli(
+        settings,
+        model=FakeListChatModel(responses=["one", "two", "three"]),
+        input_fn=_reader(
+            [
+                "hello default",
+                "/new work",
+                "hello work",
+                "/use default",
+                "again default",
+                "/sessions",
+                "/exit",
+            ]
+        ),
+        stdout=stdout,
+        stderr=StringIO(),
+    )
+
+    assert result == 0
+    assert "work" in stdout.getvalue()
+    assert settings.database_path is not None
+    with open_sqlite_persistence(settings.database_path) as persistence:
+        stored_sessions = persistence.sessions.list()
+        work = next(item for item in stored_sessions if item.name == "work")
+        graph = create_agent_graph(
+            FakeListChatModel(responses=["unused"]),
+            checkpointer=persistence.checkpointer,
+        )
+        default_state = graph.get_state(cli.THREAD_CONFIG)
+        work_state = graph.get_state(
+            {"configurable": {"thread_id": str(work.id)}}
+        )
+
+    assert [item.content for item in default_state.values["messages"]] == [
+        "hello default",
+        "one",
+        "again default",
+        "three",
+    ]
+    assert [item.content for item in work_state.values["messages"]] == [
+        "hello work",
+        "two",
+    ]
+
+
+def test_cli_persists_model_selection_and_recovers_from_removed_model(tmp_path) -> None:
+    database = tmp_path / "models.sqlite3"
+    first_settings = Settings(
+        KIMI_API_KEY="kimi-secret",
+        AGENT_MODELS="kimi:kimi-a,openai-compatible:coder",
+        AGENT_DEFAULT_MODEL="kimi:kimi-a",
+        OPENAI_COMPAT_API_KEY="compat-secret",
+        OPENAI_COMPAT_BASE_URL="http://localhost:8000/v1",
+        AGENT_WORKSPACE=tmp_path,
+        AGENT_DB_PATH=database,
+        _env_file=None,
+    )
+    first_output = StringIO()
+    assert cli.run_cli(
+        first_settings,
+        model=FakeListChatModel(responses=["unused"]),
+        input_fn=_reader(["/models", "/model openai-compatible:coder", "/exit"]),
+        stdout=first_output,
+        stderr=StringIO(),
+    ) == 0
+    assert "openai-compatible:coder" in first_output.getvalue()
+
+    second_settings = Settings(
+        KIMI_API_KEY="kimi-secret",
+        KIMI_MODEL="kimi-a",
+        AGENT_WORKSPACE=tmp_path,
+        AGENT_DB_PATH=database,
+        _env_file=None,
+    )
+    second_output = StringIO()
+    second_errors = StringIO()
+    assert cli.run_cli(
+        second_settings,
+        model=FakeListChatModel(responses=["unused"]),
+        input_fn=_reader(["/model kimi:kimi-a", "/session", "/exit"]),
+        stdout=second_output,
+        stderr=second_errors,
+    ) == 0
+
+    assert "当前会话模型不可用：openai-compatible:coder" in second_errors.getvalue()
+    assert "模型: kimi:kimi-a" in second_output.getvalue()

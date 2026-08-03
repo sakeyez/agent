@@ -6,13 +6,15 @@ from typing import Any
 from pydantic import AnyHttpUrl, Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from coding_agent.providers.base import ModelSelection, ProviderError
+
 
 class ConfigError(ValueError):
     """A configuration error safe to display in the terminal."""
 
 
 class Settings(BaseSettings):
-    """Runtime settings for the single Kimi provider and workspace."""
+    """Runtime settings for providers, model catalog, and workspace."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -21,11 +23,21 @@ class Settings(BaseSettings):
         populate_by_name=True,
     )
 
-    kimi_api_key: SecretStr = Field(validation_alias="KIMI_API_KEY")
-    kimi_model: str = Field(validation_alias="KIMI_MODEL")
+    kimi_api_key: SecretStr | None = Field(default=None, validation_alias="KIMI_API_KEY")
+    kimi_model: str | None = Field(default=None, validation_alias="KIMI_MODEL")
     kimi_base_url: AnyHttpUrl = Field(
         default="https://api.moonshot.cn/v1",
         validation_alias="KIMI_BASE_URL",
+    )
+    openai_compatible_api_key: SecretStr | None = Field(
+        default=None, validation_alias="OPENAI_COMPAT_API_KEY"
+    )
+    openai_compatible_base_url: AnyHttpUrl | None = Field(
+        default=None, validation_alias="OPENAI_COMPAT_BASE_URL"
+    )
+    models: str | None = Field(default=None, validation_alias="AGENT_MODELS")
+    default_model: str | None = Field(
+        default=None, validation_alias="AGENT_DEFAULT_MODEL"
     )
     workspace: Path = Field(default_factory=Path.cwd, validation_alias="AGENT_WORKSPACE")
     database_path: Path | None = Field(default=None, validation_alias="AGENT_DB_PATH")
@@ -49,16 +61,18 @@ class Settings(BaseSettings):
         default=None, validation_alias="AGENT_MCP_CONFIG_PATH"
     )
 
-    @field_validator("kimi_api_key")
+    @field_validator("kimi_api_key", "openai_compatible_api_key")
     @classmethod
-    def validate_api_key(cls, value: SecretStr) -> SecretStr:
-        if not value.get_secret_value().strip():
+    def validate_api_key(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and not value.get_secret_value().strip():
             raise ValueError("must not be empty")
         return value
 
     @field_validator("kimi_model")
     @classmethod
-    def validate_model(cls, value: str) -> str:
+    def validate_model(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         value = value.strip()
         if not value:
             raise ValueError("must not be empty")
@@ -74,6 +88,20 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def resolve_runtime_paths(self) -> "Settings":
+        catalog = self.model_catalog
+        providers = {selection.provider_id for selection in catalog}
+        if "kimi" in providers and self.kimi_api_key is None:
+            raise ValueError("KIMI_API_KEY is required by AGENT_MODELS")
+        if "openai-compatible" in providers:
+            if self.openai_compatible_api_key is None:
+                raise ValueError("OPENAI_COMPAT_API_KEY is required by AGENT_MODELS")
+            if self.openai_compatible_base_url is None:
+                raise ValueError("OPENAI_COMPAT_BASE_URL is required by AGENT_MODELS")
+        unsupported = providers - {"kimi", "openai-compatible"}
+        if unsupported:
+            raise ValueError(f"unsupported providers: {', '.join(sorted(unsupported))}")
+        if self.default_model_selection not in catalog:
+            raise ValueError("AGENT_DEFAULT_MODEL must be present in AGENT_MODELS")
         database_path = self.database_path
         if database_path is None:
             database_path = self.workspace / ".coding_agent" / "checkpoints.sqlite3"
@@ -103,6 +131,43 @@ class Settings(BaseSettings):
         return path.resolve()
 
     @property
+    def model_catalog(self) -> tuple[ModelSelection, ...]:
+        if self.models is None:
+            if self.kimi_model is None:
+                missing = "KIMI_MODEL"
+                if self.kimi_api_key is None:
+                    missing = "KIMI_API_KEY and KIMI_MODEL"
+                raise ValueError(f"{missing} required when AGENT_MODELS is not set")
+            raw_models = [f"kimi:{self.kimi_model}"]
+        else:
+            raw_models = [item.strip() for item in self.models.split(",") if item.strip()]
+            if not raw_models:
+                raise ValueError("AGENT_MODELS must contain at least one model")
+        try:
+            catalog = tuple(ModelSelection.parse(item) for item in raw_models)
+        except ProviderError as error:
+            raise ValueError(str(error)) from None
+        if len(set(catalog)) != len(catalog):
+            raise ValueError("AGENT_MODELS contains duplicate models")
+        return catalog
+
+    @property
+    def default_model_selection(self) -> ModelSelection:
+        if self.default_model is None:
+            return self.model_catalog[0]
+        try:
+            return ModelSelection.parse(self.default_model)
+        except ProviderError as error:
+            raise ValueError(str(error)) from None
+
+    @property
+    def provider_secrets(self) -> tuple[str, ...]:
+        values = (self.kimi_api_key, self.openai_compatible_api_key)
+        return tuple(
+            value.get_secret_value() for value in values if value is not None
+        )
+
+    @property
     def enabled_plugin_names(self) -> frozenset[str] | None:
         """Return an optional allow-list parsed from a comma-separated setting."""
 
@@ -120,6 +185,14 @@ _ENV_NAMES = {
     "KIMI_MODEL": "KIMI_MODEL",
     "kimi_base_url": "KIMI_BASE_URL",
     "KIMI_BASE_URL": "KIMI_BASE_URL",
+    "openai_compatible_api_key": "OPENAI_COMPAT_API_KEY",
+    "OPENAI_COMPAT_API_KEY": "OPENAI_COMPAT_API_KEY",
+    "openai_compatible_base_url": "OPENAI_COMPAT_BASE_URL",
+    "OPENAI_COMPAT_BASE_URL": "OPENAI_COMPAT_BASE_URL",
+    "models": "AGENT_MODELS",
+    "AGENT_MODELS": "AGENT_MODELS",
+    "default_model": "AGENT_DEFAULT_MODEL",
+    "AGENT_DEFAULT_MODEL": "AGENT_DEFAULT_MODEL",
     "workspace": "AGENT_WORKSPACE",
     "AGENT_WORKSPACE": "AGENT_WORKSPACE",
     "database_path": "AGENT_DB_PATH",
@@ -148,10 +221,13 @@ _ENV_NAMES = {
 def _format_validation_error(error: ValidationError) -> str:
     problems: list[str] = []
     for detail in error.errors(include_url=False, include_context=False, include_input=False):
-        field = str(detail["loc"][-1])
+        location = detail["loc"]
+        field = str(location[-1]) if location else ""
         env_name = _ENV_NAMES.get(field, field)
         if detail["type"] == "missing":
             problems.append(f"缺少必要配置 {env_name}")
+        elif field == "":
+            problems.append(f"配置无效: {detail['msg']}")
         else:
             problems.append(f"{env_name} 无效: {detail['msg']}")
     return "；".join(problems)

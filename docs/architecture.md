@@ -2,7 +2,7 @@
 
 ## 目标
 
-在保留现有 CLI 与 SQLite 会话兼容性的前提下，为工具调用、工作区访问、批准、审计、会话管理和后续扩展建立清晰边界。编码工具循环位于 `agents/coding`、`tools`、`workspace` 和 `security`；根目录的 `graph.py`、`prompt.py` 和 `state.py` 继续作为兼容入口。
+在保留现有 CLI 与 SQLite 会话兼容性的前提下，为工具调用、工作区访问、批准、审计、会话管理和后续扩展建立清晰边界。编码工具循环位于 `agents/coding`、`tools`、`workspace` 和 `security`；根目录的 `cli.py`、`graph.py`、`prompt.py` 和 `state.py` 继续作为兼容入口。
 
 ## 分层与依赖方向
 
@@ -102,12 +102,12 @@ CLI input
 
 | 当前模块 | 目标位置 | 迁移时机 |
 | --- | --- | --- |
-| `cli.py` | `interfaces/cli/` + `application/` | 拆分命令、渲染和启动组装时 |
+| `cli.py` | `interfaces/cli/` + `application/` | 已迁移，保留兼容入口 |
 | `graph.py` | `agents/coding/graph.py` | 已迁移，保留兼容入口 |
 | `state.py` | `agents/coding/state.py` | 已迁移，保留兼容入口 |
 | `prompt.py` | `agents/coding/prompt.py` | 已迁移，保留兼容入口 |
-| `providers/kimi.py` | 保持原位 | 引入 Provider 协议和注册表时 |
-| SQLite 创建逻辑 | `persistence/checkpoints.py` | 支持多会话或替换存储时 |
+| `providers/kimi.py` | 保持原位 | 已接入 Provider 协议和注册表 |
+| SQLite 创建逻辑 | `persistence/checkpoints.py` | 已迁移并支持多会话元数据 |
 
 迁移期间，根目录旧模块应作为兼容入口转发到新模块，直到调用方和测试全部切换，再删除兼容层。
 

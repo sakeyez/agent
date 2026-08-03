@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.scripts]
-coding-agent = "coding_agent.cli:main"
+coding-agent = "coding_agent.interfaces.cli.app:main"
 
 [dependency-groups]
 dev = [

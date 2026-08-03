@@ -21,6 +21,6 @@ class CliApprovalProvider:
         except (EOFError, StopIteration):
             answer = ""
         approved = answer in {"y", "yes", "是"}
-        self.output.write("已批准。\nKimi> " if approved else "已拒绝。\nKimi> ")
+        self.output.write("已批准。\n" if approved else "已拒绝。\n")
         self.output.flush()
         return ApprovalStatus.APPROVED if approved else ApprovalStatus.DENIED
