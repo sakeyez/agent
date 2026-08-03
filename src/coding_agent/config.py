@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     )
     workspace: Path = Field(default_factory=Path.cwd, validation_alias="AGENT_WORKSPACE")
     database_path: Path | None = Field(default=None, validation_alias="AGENT_DB_PATH")
+    audit_path: Path | None = Field(default=None, validation_alias="AGENT_AUDIT_PATH")
 
     @field_validator("kimi_api_key")
     @classmethod
@@ -63,6 +64,14 @@ class Settings(BaseSettings):
             if not database_path.is_absolute():
                 database_path = self.workspace / database_path
         self.database_path = database_path.resolve()
+        audit_path = self.audit_path
+        if audit_path is None:
+            audit_path = self.workspace / ".coding_agent" / "audit.jsonl"
+        else:
+            audit_path = audit_path.expanduser()
+            if not audit_path.is_absolute():
+                audit_path = self.workspace / audit_path
+        self.audit_path = audit_path.resolve()
         return self
 
 
@@ -77,6 +86,8 @@ _ENV_NAMES = {
     "AGENT_WORKSPACE": "AGENT_WORKSPACE",
     "database_path": "AGENT_DB_PATH",
     "AGENT_DB_PATH": "AGENT_DB_PATH",
+    "audit_path": "AGENT_AUDIT_PATH",
+    "AGENT_AUDIT_PATH": "AGENT_AUDIT_PATH",
 }
 
 

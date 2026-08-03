@@ -1,10 +1,15 @@
-"""LangGraph state for the first-stage agent."""
+"""Compatibility import for the coding agent state."""
 
-from typing import Annotated, TypedDict
+from coding_agent.agents.coding.state import CodingAgentState
+from coding_agent.agents.coding.tasks import StepStatus, TaskPlan, TaskStatus, VerificationStatus
 
-from langchain_core.messages import AnyMessage
-from langgraph.graph.message import add_messages
-class AgentState(TypedDict):
-    messages: Annotated[list[AnyMessage], add_messages]
-    workspace: str
-    tool_rounds: int
+AgentState = CodingAgentState
+
+__all__ = [
+    "AgentState",
+    "CodingAgentState",
+    "StepStatus",
+    "TaskPlan",
+    "TaskStatus",
+    "VerificationStatus",
+]

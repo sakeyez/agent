@@ -9,9 +9,14 @@ from io import StringIO
 import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import FakeListChatModel
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatResult
+from langchain_core.outputs import ChatGeneration
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from coding_agent import cli
+from coding_agent.agents.coding.graph import create_agent_graph
+from coding_agent.agents.coding.planner import CorrectionDecision, PlanningDecision
 from coding_agent.config import ConfigError, Settings
 
 
@@ -22,6 +27,70 @@ class FailingChatModel(BaseChatModel):
 
     def _generate(self, *args, **kwargs) -> ChatResult:
         raise RuntimeError("request broke")
+
+
+class TaskCliModel(BaseChatModel):
+    responses: list[AIMessage]
+    index: int = 0
+
+    @property
+    def _llm_type(self) -> str:
+        return "task-cli-test"
+
+    def bind_tools(self, tools, *, tool_choice=None, **kwargs):
+        return self
+
+    def _generate(self, *args, **kwargs) -> ChatResult:
+        response = self.responses[self.index]
+        self.index += 1
+        return ChatResult(generations=[ChatGeneration(message=response)])
+
+
+class InterruptingTaskModel(TaskCliModel):
+    def _generate(self, *args, **kwargs) -> ChatResult:
+        raise KeyboardInterrupt
+
+
+class DocsPlanner:
+    plan_calls: int = 0
+
+    def plan(self, request: str, workspace: str) -> PlanningDecision:
+        self.plan_calls += 1
+        return PlanningDecision(
+            mode="task",
+            objective=request,
+            steps=["update documentation"],
+            change_scope="docs",
+        )
+
+    def plan_correction(
+        self, objective: str, failure_summary: str, workspace: str
+    ) -> CorrectionDecision:
+        return CorrectionDecision(steps=["correct documentation"])
+
+
+def _call(call_id: str, name: str, args: dict) -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[{"id": call_id, "name": name, "args": args}],
+    )
+
+
+def _completed_task_responses() -> list[AIMessage]:
+    return [
+        _call(
+            "step",
+            "report_step_result",
+            {"step_id": "step-1", "outcome": "completed", "summary": "done"},
+        ),
+        _call("diff", "git_diff", {}),
+        _call(
+            "verified",
+            "report_verification",
+            {"outcome": "passed", "summary": "diff reviewed"},
+        ),
+        AIMessage(content="Documentation task completed."),
+    ]
 
 
 def _reader(values: list[str]) -> Callable[[str], str]:
@@ -119,3 +188,87 @@ def test_module_entrypoint_can_start_and_exit(tmp_path) -> None:
 
     assert completed.returncode == 0
     assert "Traceback" not in completed.stderr
+
+
+def test_cli_status_shows_persisted_plan_and_verification(settings: Settings) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=settings.workspace, check=True)
+    stdout = StringIO()
+
+    result = cli.run_cli(
+        settings,
+        model=TaskCliModel(responses=_completed_task_responses()),
+        task_planner=DocsPlanner(),
+        input_fn=_reader(["update docs", "/status", "/exit"]),
+        stdout=stdout,
+        stderr=StringIO(),
+    )
+
+    assert result == 0
+    rendered = stdout.getvalue()
+    assert "[任务] planning" in rendered
+    assert "[验证] passed" in rendered
+    assert "状态: completed | 验证: passed" in rendered
+    assert "[completed] step-1 update documentation" in rendered
+
+
+def test_cli_can_cancel_task_after_interrupt(settings: Settings) -> None:
+    stdout = StringIO()
+
+    result = cli.run_cli(
+        settings,
+        model=InterruptingTaskModel(responses=[]),
+        task_planner=DocsPlanner(),
+        input_fn=_reader(["update docs", "/cancel", "/status", "/exit"]),
+        stdout=stdout,
+        stderr=StringIO(),
+    )
+
+    assert result == 0
+    rendered = stdout.getvalue()
+    assert "最近的检查点暂停" in rendered
+    assert "任务已取消" in rendered
+    assert "状态: cancelled" in rendered
+
+
+def test_cli_automatically_resumes_unfinished_task(settings: Settings) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=settings.workspace, check=True)
+    planner = DocsPlanner()
+    request = "update docs"
+    assert settings.database_path is not None
+    settings.database_path.parent.mkdir(parents=True, exist_ok=True)
+    with SqliteSaver.from_conn_string(str(settings.database_path)) as checkpointer:
+        graph = create_agent_graph(
+            TaskCliModel(responses=[]),
+            checkpointer=checkpointer,
+            task_planner=planner,
+        )
+        stream = graph.stream(
+            {
+                "messages": [HumanMessage(content=request)],
+                "request": request,
+                "workspace": str(settings.workspace),
+                "tool_rounds": 0,
+            },
+            config=cli.THREAD_CONFIG,
+            stream_mode="updates",
+        )
+        for update in stream:
+            if "prepare_step" in update:
+                stream.close()
+                break
+
+    resumed_planner = DocsPlanner()
+    stdout = StringIO()
+    result = cli.run_cli(
+        settings,
+        model=TaskCliModel(responses=_completed_task_responses()),
+        task_planner=resumed_planner,
+        input_fn=_reader(["/exit"]),
+        stdout=stdout,
+        stderr=StringIO(),
+    )
+
+    assert result == 0
+    assert "正在恢复未完成任务" in stdout.getvalue()
+    assert "Documentation task completed." in stdout.getvalue()
+    assert resumed_planner.plan_calls == 0

@@ -22,5 +22,6 @@ def test_prompt_contains_identity_workspace_and_history() -> None:
     assert isinstance(messages[0], SystemMessage)
     assert "Kimi" in str(messages[0].content)
     assert "C:/work/project" in str(messages[0].content)
-    assert "没有工具调用能力" in str(messages[0].content)
+    assert "apply_patch" in str(messages[0].content)
+    assert "run_command accepts an argv array" in str(messages[0].content)
     assert messages[1:] == history

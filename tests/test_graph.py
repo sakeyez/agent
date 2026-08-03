@@ -20,11 +20,22 @@ def _input(text: str, workspace: Path) -> dict:
     }
 
 
-def test_graph_has_only_model_between_start_and_end() -> None:
+def test_graph_contains_bounded_model_tool_loop() -> None:
     graph = create_agent_graph(FakeListChatModel(responses=["ok"]))
     edges = {(edge.source, edge.target) for edge in graph.get_graph().edges}
 
-    assert edges == {("__start__", "model"), ("model", "__end__")}
+    assert {
+        ("__start__", "intake"),
+        ("intake", "chat_model"),
+        ("intake", "plan_task"),
+        ("chat_model", "chat_tools"),
+        ("chat_model", "chat_limit"),
+        ("plan_task", "prepare_step"),
+        ("prepare_step", "task_model"),
+        ("prepare_step", "start_verification"),
+        ("verification_tools", "prepare_correction"),
+        ("task_final", "__end__"),
+    } <= edges
 
 
 def test_graph_merges_multiple_turns() -> None:

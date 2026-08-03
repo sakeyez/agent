@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "coding-agent"
 version = "0.1.0"
-description = "A minimal persistent Kimi CLI agent built with LangGraph."
+description = "A policy-controlled Kimi coding agent built with LangGraph."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

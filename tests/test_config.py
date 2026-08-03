@@ -31,15 +31,18 @@ def test_defaults_and_relative_database_path(tmp_path: Path) -> None:
     assert str(settings.kimi_base_url).rstrip("/") == "https://api.moonshot.cn/v1"
     assert settings.workspace == tmp_path.resolve()
     assert settings.database_path == (tmp_path / ".coding_agent/checkpoints.sqlite3").resolve()
+    assert settings.audit_path == (tmp_path / ".coding_agent/audit.jsonl").resolve()
 
     relative = Settings(
         KIMI_API_KEY="secret",
         KIMI_MODEL="kimi-model",
         AGENT_WORKSPACE=tmp_path,
         AGENT_DB_PATH="state/agent.sqlite3",
+        AGENT_AUDIT_PATH="state/audit.jsonl",
         _env_file=None,
     )
     assert relative.database_path == (tmp_path / "state/agent.sqlite3").resolve()
+    assert relative.audit_path == (tmp_path / "state/audit.jsonl").resolve()
 
 
 def test_invalid_workspace_has_sanitized_error(tmp_path: Path) -> None:
