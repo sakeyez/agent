@@ -26,6 +26,11 @@ class ToolRegistry:
     def get(self, name: str) -> ToolDefinition | None:
         return self._tools.get(name)
 
+    def names(self) -> frozenset[str]:
+        """Return an immutable snapshot of all registered tool names."""
+
+        return frozenset(self._tools)
+
     def model_schemas(self, names: set[str] | None = None) -> list[dict[str, Any]]:
         return [
             tool.model_schema()

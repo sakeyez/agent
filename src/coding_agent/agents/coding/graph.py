@@ -11,6 +11,14 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
+from coding_agent.agents.coding.context import (
+    DEFAULT_CONTEXT_KEEP_RECENT_TURNS,
+    DEFAULT_CONTEXT_MAX_CHARS,
+    DEFAULT_MEMORY_SUMMARY_MAX_CHARS,
+    ContextCompactor,
+    ContextManager,
+    ModelContextCompactor,
+)
 from coding_agent.agents.coding.nodes import CodingAgentNodes
 from coding_agent.agents.coding.planner import ModelTaskPlanner, TaskPlanner
 from coding_agent.agents.coding.prompt import PromptBuilder
@@ -79,6 +87,10 @@ def create_agent_graph(
     max_phase_tool_rounds: int = DEFAULT_MAX_TOOL_ROUNDS,
     max_task_tool_rounds: int = DEFAULT_MAX_TASK_TOOL_ROUNDS,
     max_correction_attempts: int = DEFAULT_MAX_CORRECTION_ATTEMPTS,
+    context_compactor: ContextCompactor | None = None,
+    context_max_chars: int = DEFAULT_CONTEXT_MAX_CHARS,
+    context_keep_recent_turns: int = DEFAULT_CONTEXT_KEEP_RECENT_TURNS,
+    memory_summary_max_chars: int = DEFAULT_MEMORY_SUMMARY_MAX_CHARS,
 ) -> CompiledStateGraph:
     """Compile the bounded chat loop and persistent task lifecycle."""
 
@@ -86,6 +98,12 @@ def create_agent_graph(
         raise ValueError("tool round limits must be positive")
     if max_correction_attempts < 0:
         raise ValueError("max_correction_attempts cannot be negative")
+    context_manager = ContextManager(
+        context_compactor
+        or ModelContextCompactor(model, summary_max_chars=memory_summary_max_chars),
+        max_chars=context_max_chars,
+        keep_recent_turns=context_keep_recent_turns,
+    )
     registry = tool_registry or (
         tool_executor.registry if tool_executor is not None else create_coding_tool_registry()
     )
@@ -121,6 +139,7 @@ def create_agent_graph(
     )
 
     builder = StateGraph(CodingAgentState)
+    builder.add_node("compact_context", context_manager.compact)
     builder.add_node("intake", task_nodes.intake)
     builder.add_node("chat_model", chat_nodes.call_model)
     builder.add_node("chat_tools", chat_nodes.call_tools)
@@ -138,7 +157,8 @@ def create_agent_graph(
     builder.add_node("prepare_correction", task_nodes.prepare_correction)
     builder.add_node("task_final", task_nodes.final_task)
 
-    builder.add_edge(START, "intake")
+    builder.add_edge(START, "compact_context")
+    builder.add_edge("compact_context", "intake")
     builder.add_conditional_edges(
         "intake",
         _action,

@@ -16,6 +16,9 @@ dependencies = [
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
     "python-dotenv>=1.2.2",
+    "mcp>=1.12,<2",
+    "jsonschema>=4.23",
+    "packaging>=24.2",
 ]
 
 [project.scripts]

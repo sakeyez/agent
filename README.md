@@ -11,12 +11,15 @@
 - LangGraph 模型/工具推理循环，默认最多 8 个工具轮次
 - 复杂修改请求的持久化规划、步骤进度、显式验证和最多 2 轮自动纠错
 - 阶段 8 轮、任务总计 24 轮的双重工具预算
+- 自动上下文压缩，以及按会话持久化的决策、项目约束和滚动摘要
 - 工作区文件列表、UTF-8 文件读取、字面量搜索和 Git 差异检查
 - 逐次批准的 unified diff 修改和分级批准的单程序命令执行
 - 路径越界、符号链接逃逸、危险命令和敏感凭据防护
 - 工具参数校验、独立超时、64 KiB 头尾截断、结果脱敏和 JSONL 审计
+- 显式启用的本地 Python 插件发现、兼容校验、故障隔离和工具注册
+- 显式启用的 MCP stdio 长期会话、工具发现、JSON Schema 校验和调用适配
 
-当前版本不支持完整 Shell 字符串、多模型、网页界面、MCP、插件加载或子 Agent。`run_command` 只接受参数数组并使用 `shell=False`；Shell 解释器和明确危险的命令会被拒绝。
+当前版本不支持完整 Shell 字符串、多模型、网页界面、MCP HTTP/SSE、MCP resources/prompts 或子 Agent。`run_command` 只接受参数数组并使用 `shell=False`；Shell 解释器和明确危险的命令会被拒绝。
 
 ## 安装
 
@@ -48,9 +51,19 @@ KIMI_BASE_URL=https://api.moonshot.cn/v1
 AGENT_WORKSPACE=.
 AGENT_DB_PATH=.coding_agent/checkpoints.sqlite3
 AGENT_AUDIT_PATH=.coding_agent/audit.jsonl
+AGENT_CONTEXT_MAX_CHARS=80000
+AGENT_CONTEXT_KEEP_RECENT_TURNS=4
+AGENT_MEMORY_SUMMARY_MAX_CHARS=12000
+AGENT_ENABLE_PLUGINS=false
+AGENT_PLUGINS_PATH=plugins
+AGENT_ENABLED_PLUGINS=my-plugin,other-plugin
+AGENT_ENABLE_MCP=false
+AGENT_MCP_CONFIG_PATH=.coding_agent/mcp.json
 ```
 
-`AGENT_WORKSPACE` 默认为启动命令时的当前目录，并且必须已经存在。相对的数据库和审计路径均从工作区解析；默认位于 `<workspace>/.coding_agent/`。API Key 使用 Pydantic `SecretStr` 保存，并与 `.env` 中的值一起从工具输出和审计摘要中脱敏。
+`AGENT_WORKSPACE` 默认为启动命令时的当前目录，并且必须已经存在。相对的数据库和审计路径均从工作区解析；默认位于 `<workspace>/.coding_agent/`。上下文达到近似序列化字符阈值后，系统保留最近若干轮，将更早消息压缩为滚动摘要、会话决策和项目约束；这些记忆随 checkpoint 持久化。API Key 使用 Pydantic `SecretStr` 保存，并与 `.env` 中的值一起从工具输出和审计摘要中脱敏。
+
+插件与 MCP 均默认关闭。插件协议、模板、MCP JSON 示例、工具命名和安全边界见 [插件与 MCP 扩展系统](docs/extensions.md)。
 
 ## 使用
 
@@ -66,19 +79,19 @@ coding-agent
 
 输入普通文本即可对话。普通问答保持只读；复杂修改请求会自动建立任务并显示规划、执行、验证和纠错状态。输入 `/status` 可查看当前或最近任务，输入 `/cancel` 可取消中断后的未完成任务，输入 `/exit`、在输入提示处按 `Ctrl+C` 或发送 EOF 会正常退出。执行期间按 `Ctrl+C` 会保留最近 checkpoint 并返回输入提示。
 
-CLI 始终使用 SQLite 中的 `default` 会话。重新启动不会回放旧文本，但旧消息会继续作为模型上下文；非终态任务会从最近节点自动续跑。当前仅保留当前或最近任务，不提供任务历史、新建或清空会话命令；如需完全重置，可以在 CLI 退出后手动删除检查点数据库。
+CLI 始终使用 SQLite 中的 `default` 会话。重新启动不会回放旧文本，但最近消息和压缩后的长期记忆会继续作为模型上下文；非终态任务会从最近节点自动续跑。当前仅保留当前或最近任务，不提供任务历史、新建或清空会话命令；如需完全重置，可以在 CLI 退出后手动删除检查点数据库。
 
 ## 工作原理
 
 1. `config.py` 从环境变量和 `.env` 加载并验证 Kimi、工作区和数据库配置。
 2. `providers/kimi.py` 创建唯一的 Kimi `ChatOpenAI` 客户端。
-3. `PromptBuilder` 将 Agent 身份、工作区和行为边界放入 System Prompt。
+3. 上下文管理器在达到阈值时压缩旧消息；`PromptBuilder` 将 Agent 身份、工作区、行为边界和结构化长期记忆放入 System Prompt。
 4. 请求入口自动区分普通只读聊天与复杂任务；复杂任务通过结构化 schema 生成 1-8 个持久化步骤。
 5. 任务按步骤执行，并显式记录 `planning`、`executing`、`verifying`、`correcting`、`completed`、`failed` 或 `cancelled` 状态。
 6. 统一执行器依次完成参数校验、模式允许列表、策略判定、必要的用户批准、预执行审计、执行、脱敏和截断。
 7. 验证阶段禁止修改；代码类任务必须同时具备成功的测试/检查命令和 `git_diff` 复查证据，文档类任务必须完成 diff 复查。
 8. 验证非零退出会触发最多 2 轮纠错；依赖缺失、策略拒绝、批准拒绝或预算耗尽直接失败并保留证据。
-9. SQLite checkpointer 保存 `default` 会话及任务状态；JSONL 审计保存脱敏后的工具决策和结果，不保存补丁正文或文件内容。
+9. SQLite checkpointer 保存 `default` 会话、当前任务、近期消息和长期记忆；JSONL 审计保存脱敏后的工具决策和结果，不保存补丁正文或文件内容。
 
 ## 内置工具
 
@@ -124,7 +137,8 @@ src/coding_agent/
   workspace/          # 工作区上下文、路径边界和敏感文件防护
   providers/kimi.py   # 固定 Kimi 客户端
 tests/                # 自动化测试
-plugins/              # 后续阶段预留
+  plugins/              # 本地插件发现、清单校验和隔离加载
+  mcp/                  # MCP stdio 配置、会话管理和工具适配
 ```
 
 ## 架构

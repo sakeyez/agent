@@ -30,6 +30,24 @@ class Settings(BaseSettings):
     workspace: Path = Field(default_factory=Path.cwd, validation_alias="AGENT_WORKSPACE")
     database_path: Path | None = Field(default=None, validation_alias="AGENT_DB_PATH")
     audit_path: Path | None = Field(default=None, validation_alias="AGENT_AUDIT_PATH")
+    context_max_chars: int = Field(
+        default=80_000, ge=1_000, validation_alias="AGENT_CONTEXT_MAX_CHARS"
+    )
+    context_keep_recent_turns: int = Field(
+        default=4, ge=1, le=50, validation_alias="AGENT_CONTEXT_KEEP_RECENT_TURNS"
+    )
+    memory_summary_max_chars: int = Field(
+        default=12_000, ge=500, validation_alias="AGENT_MEMORY_SUMMARY_MAX_CHARS"
+    )
+    plugins_enabled: bool = Field(default=False, validation_alias="AGENT_ENABLE_PLUGINS")
+    plugins_path: Path | None = Field(default=None, validation_alias="AGENT_PLUGINS_PATH")
+    enabled_plugins: str | None = Field(
+        default=None, validation_alias="AGENT_ENABLED_PLUGINS"
+    )
+    mcp_enabled: bool = Field(default=False, validation_alias="AGENT_ENABLE_MCP")
+    mcp_config_path: Path | None = Field(
+        default=None, validation_alias="AGENT_MCP_CONFIG_PATH"
+    )
 
     @field_validator("kimi_api_key")
     @classmethod
@@ -55,7 +73,7 @@ class Settings(BaseSettings):
         return workspace
 
     @model_validator(mode="after")
-    def resolve_database_path(self) -> "Settings":
+    def resolve_runtime_paths(self) -> "Settings":
         database_path = self.database_path
         if database_path is None:
             database_path = self.workspace / ".coding_agent" / "checkpoints.sqlite3"
@@ -72,7 +90,27 @@ class Settings(BaseSettings):
             if not audit_path.is_absolute():
                 audit_path = self.workspace / audit_path
         self.audit_path = audit_path.resolve()
+        self.plugins_path = self._workspace_path(self.plugins_path, "plugins")
+        self.mcp_config_path = self._workspace_path(
+            self.mcp_config_path, ".coding_agent/mcp.json"
+        )
         return self
+
+    def _workspace_path(self, value: Path | None, default: str) -> Path:
+        path = Path(default) if value is None else value.expanduser()
+        if not path.is_absolute():
+            path = self.workspace / path
+        return path.resolve()
+
+    @property
+    def enabled_plugin_names(self) -> frozenset[str] | None:
+        """Return an optional allow-list parsed from a comma-separated setting."""
+
+        if self.enabled_plugins is None:
+            return None
+        return frozenset(
+            name.strip() for name in self.enabled_plugins.split(",") if name.strip()
+        )
 
 
 _ENV_NAMES = {
@@ -88,6 +126,22 @@ _ENV_NAMES = {
     "AGENT_DB_PATH": "AGENT_DB_PATH",
     "audit_path": "AGENT_AUDIT_PATH",
     "AGENT_AUDIT_PATH": "AGENT_AUDIT_PATH",
+    "context_max_chars": "AGENT_CONTEXT_MAX_CHARS",
+    "AGENT_CONTEXT_MAX_CHARS": "AGENT_CONTEXT_MAX_CHARS",
+    "context_keep_recent_turns": "AGENT_CONTEXT_KEEP_RECENT_TURNS",
+    "AGENT_CONTEXT_KEEP_RECENT_TURNS": "AGENT_CONTEXT_KEEP_RECENT_TURNS",
+    "memory_summary_max_chars": "AGENT_MEMORY_SUMMARY_MAX_CHARS",
+    "AGENT_MEMORY_SUMMARY_MAX_CHARS": "AGENT_MEMORY_SUMMARY_MAX_CHARS",
+    "plugins_enabled": "AGENT_ENABLE_PLUGINS",
+    "AGENT_ENABLE_PLUGINS": "AGENT_ENABLE_PLUGINS",
+    "plugins_path": "AGENT_PLUGINS_PATH",
+    "AGENT_PLUGINS_PATH": "AGENT_PLUGINS_PATH",
+    "enabled_plugins": "AGENT_ENABLED_PLUGINS",
+    "AGENT_ENABLED_PLUGINS": "AGENT_ENABLED_PLUGINS",
+    "mcp_enabled": "AGENT_ENABLE_MCP",
+    "AGENT_ENABLE_MCP": "AGENT_ENABLE_MCP",
+    "mcp_config_path": "AGENT_MCP_CONFIG_PATH",
+    "AGENT_MCP_CONFIG_PATH": "AGENT_MCP_CONFIG_PATH",
 }
 
 

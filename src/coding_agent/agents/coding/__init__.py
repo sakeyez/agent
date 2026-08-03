@@ -2,7 +2,7 @@
 
 from coding_agent.agents.coding.graph import create_agent_graph
 from coding_agent.agents.coding.prompt import PromptBuilder
-from coding_agent.agents.coding.state import CodingAgentState
+from coding_agent.agents.coding.state import CodingAgentState, LongTermMemory
 from coding_agent.agents.coding.tasks import (
     StepStatus,
     TaskPlan,
@@ -12,6 +12,7 @@ from coding_agent.agents.coding.tasks import (
 
 __all__ = [
     "CodingAgentState",
+    "LongTermMemory",
     "PromptBuilder",
     "StepStatus",
     "TaskPlan",

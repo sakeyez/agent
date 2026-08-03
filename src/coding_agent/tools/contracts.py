@@ -45,6 +45,7 @@ class ToolDefinition:
     effect: ToolEffect = ToolEffect.READ
     timeout_seconds: float | None = None
     summary_builder: ToolSummaryBuilder | None = None
+    parameters_schema: dict[str, Any] | None = None
 
     def model_schema(self) -> dict[str, Any]:
         return {
@@ -52,7 +53,7 @@ class ToolDefinition:
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": self.args_schema.model_json_schema(),
+                "parameters": self.parameters_schema or self.args_schema.model_json_schema(),
             },
         }
 

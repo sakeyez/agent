@@ -32,6 +32,14 @@ def test_defaults_and_relative_database_path(tmp_path: Path) -> None:
     assert settings.workspace == tmp_path.resolve()
     assert settings.database_path == (tmp_path / ".coding_agent/checkpoints.sqlite3").resolve()
     assert settings.audit_path == (tmp_path / ".coding_agent/audit.jsonl").resolve()
+    assert settings.context_max_chars == 80_000
+    assert settings.context_keep_recent_turns == 4
+    assert settings.memory_summary_max_chars == 12_000
+    assert settings.plugins_enabled is False
+    assert settings.plugins_path == (tmp_path / "plugins").resolve()
+    assert settings.enabled_plugin_names is None
+    assert settings.mcp_enabled is False
+    assert settings.mcp_config_path == (tmp_path / ".coding_agent/mcp.json").resolve()
 
     relative = Settings(
         KIMI_API_KEY="secret",

@@ -20,7 +20,9 @@ from coding_agent.graph import create_agent_graph
 from coding_agent.interfaces.cli.approvals import CliApprovalProvider
 from coding_agent.interfaces.cli.commands import CliCommand, parse_command
 from coding_agent.interfaces.cli.renderer import render_task, render_task_transition
+from coding_agent.mcp import McpConfigError, McpManager, load_mcp_config
 from coding_agent.observability import JsonlAuditSink, SecretRedactor
+from coding_agent.plugins import load_plugins
 from coding_agent.providers.kimi import create_kimi_client
 from coding_agent.tools.builtin import create_coding_tool_registry
 from coding_agent.tools.executor import ToolExecutor
@@ -55,6 +57,10 @@ def _safe_error_message(error: Exception, settings: Settings) -> str:
     return message[:300]
 
 
+def _safe_startup_text(value: str, redactor: SecretRedactor) -> str:
+    return redactor.redact(value).replace("\r", " ").replace("\n", " ")[:500]
+
+
 def run_cli(
     settings: Settings,
     *,
@@ -79,9 +85,36 @@ def run_cli(
     discovered_secrets = [
         value for value in env_values.values() if isinstance(value, str)
     ]
+    extension_secrets: list[str] = []
+    plugin_report = None
+    plugins_path = settings.plugins_path
+    if settings.plugins_enabled and plugins_path is not None:
+        plugin_report = load_plugins(
+            plugins_path,
+            tool_registry,
+            enabled_plugins=settings.enabled_plugin_names,
+        )
+
+    mcp_configuration = None
+    mcp_config_error: str | None = None
+    if settings.mcp_enabled and settings.mcp_config_path is not None:
+        try:
+            mcp_configuration = load_mcp_config(settings.mcp_config_path)
+        except McpConfigError as error:
+            mcp_config_error = str(error)
+        else:
+            for server in mcp_configuration.mcp_servers.values():
+                try:
+                    extension_secrets.extend(server.resolved_env().values())
+                except McpConfigError:
+                    pass
     redactor = SecretRedactor.from_environment(
         os.environ,
-        extra_secrets=[settings.kimi_api_key.get_secret_value(), *discovered_secrets],
+        extra_secrets=[
+            settings.kimi_api_key.get_secret_value(),
+            *discovered_secrets,
+            *extension_secrets,
+        ],
     )
     audit_path = settings.audit_path
     if audit_path is None:  # Settings always resolves it; kept explicit for type checkers.
@@ -92,14 +125,41 @@ def run_cli(
         audit_sink=JsonlAuditSink(audit_path),
         redactor=redactor,
     )
+    mcp_manager = McpManager(settings.workspace)
+    mcp_report = (
+        mcp_manager.connect(mcp_configuration, tool_registry)
+        if mcp_configuration is not None
+        else None
+    )
 
-    with SqliteSaver.from_conn_string(str(database_path)) as checkpointer:
+    if plugin_report is not None:
+        if plugin_report.loaded:
+            output.write(f"已加载插件：{', '.join(plugin_report.loaded)}\n")
+        for issue in plugin_report.issues:
+            name = _safe_startup_text(issue.plugin, redactor)
+            message = _safe_startup_text(issue.message, redactor)
+            errors.write(f"插件 {name} 加载失败：{message}\n")
+    if mcp_config_error is not None:
+        errors.write(f"MCP 配置无效：{_safe_startup_text(mcp_config_error, redactor)}\n")
+    if mcp_report is not None:
+        if mcp_report.connected:
+            output.write(f"已连接 MCP：{', '.join(mcp_report.connected)}\n")
+        for issue in mcp_report.issues:
+            message = _safe_startup_text(issue.message, redactor)
+            errors.write(f"MCP {issue.server} 连接失败：{message}\n")
+    output.flush()
+    errors.flush()
+
+    with mcp_manager, SqliteSaver.from_conn_string(str(database_path)) as checkpointer:
         graph = create_agent_graph(
             chat_model,
             checkpointer=checkpointer,
             tool_registry=tool_registry,
             tool_executor=tool_executor,
             task_planner=task_planner,
+            context_max_chars=settings.context_max_chars,
+            context_keep_recent_turns=settings.context_keep_recent_turns,
+            memory_summary_max_chars=settings.memory_summary_max_chars,
         )
         def stream_run(payload: dict[str, Any] | None, *, resumed: bool = False) -> None:
             if resumed:

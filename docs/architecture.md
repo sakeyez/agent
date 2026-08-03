@@ -26,6 +26,7 @@ observability <- all runtime layers (only through event/logging contracts)
 - `sessions`：表达会话模型和用例，不了解 SQLite 等存储细节。
 - `persistence`：实现检查点和会话仓储等基础设施适配器。
 - `plugins`：发现并加载顶层 `plugins/` 中的扩展，校验插件清单。
+- `mcp`：管理显式启用的 stdio 服务器生命周期，并将远端工具适配到公开工具协议。
 - `observability`：定义运行事件和日志配置，不承载业务分支。
 
 依赖应从外向内；Agent 节点不直接访问 SQLite、终端或具体模型厂商。跨边界协作通过构造参数和协议完成，避免使用全局单例。
@@ -44,6 +45,7 @@ src/coding_agent/
   sessions/               # 会话领域模型与服务
   persistence/            # 检查点和仓储实现
   plugins/                # 插件发现、清单和加载
+  mcp/                    # MCP 配置、stdio 会话和工具适配
   observability/          # 事件与日志
 plugins/
   _template/              # 外部插件模板
@@ -62,6 +64,7 @@ tests/
 CLI input
   -> application runtime
   -> coding agent graph (new run_id per user turn)
+  -> context threshold -> compact old messages -> rolling summary + durable decisions/constraints
   -> intake
      -> ordinary chat -> read-only model/tool loop
      -> complex task -> structured plan -> persisted steps
@@ -74,7 +77,7 @@ CLI input
                       -> workspace guard -> built-in tool
                       -> redaction/truncation -> completion audit -> tool result
   -> phase budget exhausted -> persisted failure + final model response
-  -> checkpoint/session persistence
+  -> checkpoint/session/task/memory persistence
   -> CLI renderer
 ```
 
@@ -92,6 +95,8 @@ CLI input
 8. 普通聊天限制为 8 个工具轮次；任务每阶段限制 8 轮、总计限制 24 轮，并最多纠错 2 次。只读和补丁工具通常限制为 10-15 秒，命令参数上限 120 秒，单条结果限制为 64 KiB；终止原因、计划、步骤和验证证据保存在 Agent 状态。
 9. `.env`、私钥和常见凭据文件不得进入模型上下文；`.env.example` 可以正常读取。
 10. 审计仅记录脱敏摘要、策略、批准、耗时和状态，不记录补丁正文、文件内容或原始敏感参数。
+11. 当前任务使用结构化 `TaskPlan` 独立持久化；压缩只移除较早消息，长期保留会话决策、项目约束和滚动摘要。压缩失败时不得删除原消息。
+12. 插件和 MCP 必须显式启用；MCP 未声明只读的工具按执行类操作处理，不能绕过批准和审计。
 
 ## 现有模块的渐进迁移
 

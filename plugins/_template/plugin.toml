@@ -1,0 +1,7 @@
+schema_version = 1
+name = "plugin-name"
+version = "0.1.0"
+description = "Example local tool plugin."
+entrypoint = "plugin:register"
+requires_agent = ">=0.1,<0.2"
+enabled = true

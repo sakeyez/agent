@@ -25,7 +25,8 @@ def test_graph_contains_bounded_model_tool_loop() -> None:
     edges = {(edge.source, edge.target) for edge in graph.get_graph().edges}
 
     assert {
-        ("__start__", "intake"),
+        ("__start__", "compact_context"),
+        ("compact_context", "intake"),
         ("intake", "chat_model"),
         ("intake", "plan_task"),
         ("chat_model", "chat_tools"),

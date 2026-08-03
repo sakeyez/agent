@@ -25,3 +25,25 @@ def test_prompt_contains_identity_workspace_and_history() -> None:
     assert "apply_patch" in str(messages[0].content)
     assert "run_command accepts an argv array" in str(messages[0].content)
     assert messages[1:] == history
+
+
+def test_prompt_injects_structured_memory_before_recent_history() -> None:
+    history = [HumanMessage(content="continue")]
+    messages = PromptBuilder(template="Workspace: {workspace}").build(
+        {
+            "messages": history,
+            "workspace": "C:/work/project",
+            "tool_rounds": 0,
+            "memory": {
+                "conversation_summary": "Earlier work updated the parser.",
+                "session_decisions": ["Keep the public API compatible."],
+                "project_constraints": ["Tests run with pytest."],
+            },
+        }
+    )
+
+    prompt = str(messages[0].content)
+    assert "Project constraints:\n- Tests run with pytest." in prompt
+    assert "Session decisions:\n- Keep the public API compatible." in prompt
+    assert "Earlier conversation summary:\nEarlier work updated the parser." in prompt
+    assert messages[1:] == history

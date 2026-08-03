@@ -166,6 +166,42 @@ def test_main_prints_short_configuration_error(
     assert "Traceback" not in captured.err
 
 
+def test_cli_isolates_and_redacts_plugin_startup_error(settings: Settings) -> None:
+    plugin = settings.workspace / "plugins" / "leaky-plugin"
+    plugin.mkdir(parents=True)
+    (plugin / "plugin.toml").write_text(
+        "\n".join(
+            [
+                "schema_version = 1",
+                'name = "leaky-plugin"',
+                'version = "1.0.0"',
+                'description = "Broken test plugin"',
+                'entrypoint = "plugin:register"',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (plugin / "plugin.py").write_text(
+        'raise RuntimeError("test-secret-key")\n', encoding="utf-8"
+    )
+    settings.plugins_enabled = True
+    stdout = StringIO()
+    stderr = StringIO()
+
+    result = cli.run_cli(
+        settings,
+        model=FakeListChatModel(responses=["unused"]),
+        input_fn=_reader(["/exit"]),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert result == 0
+    assert "插件 leaky-plugin 加载失败" in stderr.getvalue()
+    assert "test-secret-key" not in stderr.getvalue()
+    assert "***" in stderr.getvalue()
+
+
 def test_module_entrypoint_can_start_and_exit(tmp_path) -> None:
     environment = os.environ.copy()
     environment.update(
